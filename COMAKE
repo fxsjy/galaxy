@@ -25,13 +25,13 @@ CXXFLAGS('-g -pipe -W -Wall -fPIC')
 PROTOC('../../../third-64/protobuf/bin/protoc')
 
 #头文件路径.
-INCPATHS('. ./src ./output/include')
+INCPATHS('. ./src ./output/include thirdparty/ins')
 
 #使用库
 #LIBS('./libgalaxy.a')
 
 #链接参数.
-LDFLAGS('-lpthread -lcrypto -lrt -lidn -lssl -lldap -lboost_regex')
+LDFLAGS('-lpthread -lcrypto -lrt -lidn -lssl -lldap -lboost_regex -luuid -lins_sdk -Lthirdparty/ins')
 
 #依赖模块
 CONFIGS('public/sofa-pbrpc@trunk@comake')

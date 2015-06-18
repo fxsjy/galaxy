@@ -22,6 +22,8 @@ DECLARE_string(master_checkpoint_path);
 DECLARE_int32(master_max_len_sched_task_list);
 DECLARE_int32(master_safe_mode_last);
 
+using namespace galaxy::ins::sdk;
+
 namespace galaxy {
 //agent load id index
 typedef boost::multi_index::nth_index<AgentLoadIndex,0>::type agent_id_index;
@@ -50,7 +52,7 @@ MasterImpl::MasterImpl()
       rpc_client_(NULL),
       is_safe_mode_(false),
       start_time_(0),
-      persistence_handler_(NULL) {
+      ins_sdk_(NULL) {
     rpc_client_ = new RpcClient();
     thread_pool_.AddTask(boost::bind(&MasterImpl::Schedule, this));
     thread_pool_.AddTask(boost::bind(&MasterImpl::DeadCheck, this));
@@ -62,31 +64,22 @@ bool MasterImpl::Recover() {
     // clear jobs 
     jobs_.clear();
 
-    if (persistence_handler_ == NULL) {
-        // open leveldb  TODO do some config
-        leveldb::Options options;
-        options.create_if_missing = true;
-        leveldb::Status status = 
-            leveldb::DB::Open(options, 
-                    checkpoint_path, &persistence_handler_);
-        if (!status.ok()) {
-            LOG(FATAL, "open checkpoint %s failed res[%s]",
-                    checkpoint_path.c_str(), status.ToString().c_str()); 
-            return false;
-        }
+    if (ins_sdk_ == NULL) {
+        std::vector<std::string> members;
+        members.push_back("cq01-ps-dev377.cq01.baidu.com:8868");
+        members.push_back("cq01-ps-dev377.cq01.baidu.com:8869");
+        ins_sdk_ = new InsSDK(members);
     }
 
     // scan JobCheckPointCell 
     // TODO JobInfo is equal to JobCheckpointCell, use pb later
 
     // TODO do some config options
-    leveldb::Iterator*  it = 
-        persistence_handler_->NewIterator(leveldb::ReadOptions());
-    it->SeekToFirst();
+    ScanResult* result = ins_sdk_->Scan("", "");
     int64_t max_job_id = 0;
-    while (it->Valid()) {
-        std::string job_key = it->key().ToString();
-        std::string job_cell = it->value().ToString();
+    while (!result->Done()) {
+        std::string job_key = result->Key();
+        std::string job_cell = result->Value();
         if (job_key.find(TAG_KEY_PREFIX) == 0) {
             PersistenceTagEntity entity;
             if (!entity.ParseFromString(job_cell)) {
@@ -94,7 +87,7 @@ bool MasterImpl::Recover() {
                 return false;
             }
             UpdateTag(entity);
-            it->Next();
+            result->Next();
             continue;
         }
         int64_t job_id = atol(job_key.c_str());
@@ -147,9 +140,9 @@ bool MasterImpl::Recover() {
                 job_info.deploy_step_size);
         // only safe_mode when recovered, 
         is_safe_mode_ = true;
-        it->Next();
+        result->Next();
     }
-    delete it;
+    delete result;
     
     next_job_id_ = max_job_id + 1;
     start_time_ = common::timer::now_time();
@@ -1201,15 +1194,15 @@ void MasterImpl::RemoveIndex(int64_t agent_id){
 }
 
 bool MasterImpl::UpdatePersistenceTag(const PersistenceTagEntity& entity) {
-    if (persistence_handler_ == NULL) {
+    if (ins_sdk_ == NULL) {
         LOG(WARNING, "persistence handler not inited yet");
         return false;
     }
     std::string key = TAG_KEY_PREFIX + entity.tag();
     if (entity.agents_size() <= 0) {
-        leveldb::Status delete_status = 
-            persistence_handler_->Delete(leveldb::WriteOptions(), key);
-        if (!delete_status.ok()) {
+        SDKError ins_err;
+        ins_sdk_->Delete(key, &ins_err);
+        if (ins_err != kOK) {
             LOG(WARNING, "delete %s failed", key.c_str()); 
             return false;
         }
@@ -1221,10 +1214,9 @@ bool MasterImpl::UpdatePersistenceTag(const PersistenceTagEntity& entity) {
                 key.c_str()); 
         return false;
     }
-    leveldb::Status write_status = 
-        persistence_handler_->Put(
-            leveldb::WriteOptions(), key, tag_value);
-    if (!write_status.ok()) {
+    SDKError ins_err;
+    ins_sdk_->Put(key, tag_value, &ins_err);
+    if (ins_err != kOK) {
         LOG(WARNING, "serialize tag entity  %s failed to write",
                 key.c_str());
         return false;
@@ -1234,15 +1226,14 @@ bool MasterImpl::UpdatePersistenceTag(const PersistenceTagEntity& entity) {
 
 
 bool MasterImpl::DeletePersistenceJobInfo(const JobInfo& job_info) {
-    if (persistence_handler_ == NULL) {
+    if (ins_sdk_ == NULL) {
         LOG(WARNING, "persistence handler not inited yet");
         return false;
     }    
     std::string key = boost::lexical_cast<std::string>(job_info.id);
-
-    leveldb::Status status = 
-        persistence_handler_->Delete(leveldb::WriteOptions(), key);
-    if (!status.ok()) {
+    SDKError ins_err;
+    ins_sdk_->Delete(key, &ins_err);
+    if (ins_err != kOK) {
         LOG(WARNING, "delete %s failed", key.c_str()); 
         return false;
     }
@@ -1279,7 +1270,7 @@ bool MasterImpl::PersistenceJobInfo(const JobInfo& job_info) {
             cell.monitor_conf().c_str()
         );
     // check persistence_handler init
-    if (persistence_handler_ == NULL) {
+    if (ins_sdk_ == NULL) {
         LOG(WARNING, "persistence handler not inited yet");
         return false;
     }
@@ -1294,10 +1285,9 @@ bool MasterImpl::PersistenceJobInfo(const JobInfo& job_info) {
         return false;
     }
 
-    leveldb::Status write_status = 
-        persistence_handler_->Put(
-            leveldb::WriteOptions(), key, cell_value);
-    if (!write_status.ok()) {
+    SDKError ins_err;
+    ins_sdk_->Put(key, cell_value, &ins_err);
+    if (ins_err != kOK) {
         LOG(WARNING, "serialize job cell %s failed to write",
                 key.c_str());
         return false;

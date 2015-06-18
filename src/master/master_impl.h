@@ -23,6 +23,7 @@
 #include "proto/agent.pb.h"
 #include "common/mutex.h"
 #include "common/thread_pool.h"
+#include "ins_sdk.h"
 
 namespace galaxy {
 
@@ -209,9 +210,10 @@ private:
     AgentLoadIndex index_;
     bool is_safe_mode_;
     int64_t start_time_;
-    leveldb::DB* persistence_handler_;
     /// master tags configuration  
     boost::unordered_map<std::string, std::set<std::string> > tags_;
+    /// ins sdk
+    galaxy::ins::sdk::InsSDK* ins_sdk_;
 };
 
 } // namespace galaxy
